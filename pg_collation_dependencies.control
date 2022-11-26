@@ -1,0 +1,5 @@
+# pg_collation_dependencies extension
+comment = 'List direct and indirect collation dependencies'
+default_version = '0.0.1'
+module_pathname = '$libdir/pg_collation_dependencies'
+relocatable = true
