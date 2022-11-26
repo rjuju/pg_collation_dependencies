@@ -6,6 +6,7 @@ CREATE TABLE coll (
 
 CREATE INDEX coll_idx ON coll (
     id, val, enfres,
+    (val COLLATE "POSIX"),
     (val COLLATE "zh_TW"),
     (val COLLATE "en_GB" > '')
 ) WHERE ((val COLLATE "de_DE" > '') OR (val COLLATE "it_IT" > ''));

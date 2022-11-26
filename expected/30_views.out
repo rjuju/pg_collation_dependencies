@@ -1,0 +1,37 @@
+SELECT table_name, object_name, collname
+FROM pg_collation_index_dependencies
+WHERE table_name = 'coll'
+AND collname = 'en_GB';
+ table_name | object_name | collname 
+------------+-------------+----------
+ coll       | coll_idx    | en_GB
+(1 row)
+
+SELECT table_name, object_name, collname
+FROM pg_collation_constraint_dependencies
+WHERE table_name = 'coll'
+AND collname = 'en_GB';
+ table_name |         object_name          | collname 
+------------+------------------------------+----------
+ coll       | public.coll_check_constraint | en_GB
+(1 row)
+
+BEGIN;
+SELECT table_name, object_name, collname, coll_recorded_version
+FROM pg_collation_broken_dependencies;
+ table_name | object_name | collname | coll_recorded_version 
+------------+-------------+----------+-----------------------
+(0 rows)
+
+UPDATE pg_collation SET collversion = 'not_a_version'
+WHERE collname IN ('en_GB', 'C', 'POSIX');
+SELECT dep_kind, table_name, object_name, collname, coll_recorded_version
+FROM pg_collation_broken_dependencies
+ORDER BY dep_kind COLLATE "C";
+  dep_kind  | table_name |         object_name          | collname | coll_recorded_version 
+------------+------------+------------------------------+----------+-----------------------
+ constraint | coll       | public.coll_check_constraint | en_GB    | not_a_version
+ index      | coll       | coll_idx                     | en_GB    | not_a_version
+(2 rows)
+
+ROLLBACK;

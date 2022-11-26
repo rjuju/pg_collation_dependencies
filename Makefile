@@ -39,3 +39,5 @@ ifneq ($(MAJORVERSION),12)
 endif		# pg12+
 	REGRESS += 20_constraint
 endif		# pg11+
+
+	REGRESS += 30_views

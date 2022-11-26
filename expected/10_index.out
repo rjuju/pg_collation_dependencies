@@ -6,6 +6,7 @@ CREATE TABLE coll (
 );
 CREATE INDEX coll_idx ON coll (
     id, val, af, enfres,
+    (val COLLATE "POSIX"),
     (val COLLATE "ar-x-icu"),
     (val COLLATE "en_GB" > '')
 ) WHERE ((val COLLATE "de-x-icu" > '') OR (val COLLATE "it_IT" > ''));
@@ -15,6 +16,7 @@ JOIN pg_collation c ON d.o = c.oid
 ORDER BY c.collname COLLATE "C";
  collname 
 ----------
+ POSIX
  af-x-icu
  ar-x-icu
  de-x-icu
@@ -24,5 +26,5 @@ ORDER BY c.collname COLLATE "C";
  es-x-icu
  fr-x-icu
  it_IT
-(9 rows)
+(10 rows)
 
