@@ -875,12 +875,9 @@ pgcd_index_deps(Oid index_oid)
 		{
 			Oid typid = get_atttype(rd_index->indrelid, indkey);
 			Datum	datum;
-			bool	isnull;
+			bool	isnull, foundcoll = false;
 
-			/* Extract any collation(s) from the underlying type if any */
-			res = list_concat(res, pgcd_get_type_collations(typid));
-
-			/* And also get the explicit collation if any */
+			/* Get the explicit collation if any */
 			datum = SysCacheGetAttr(INDEXRELID, tup,
 									Anum_pg_index_indcollation, &isnull);
 
@@ -889,8 +886,19 @@ pgcd_index_deps(Oid index_oid)
 				oidvector *indcollation = (oidvector *) DatumGetPointer(datum);
 
 				if (OidIsValid(indcollation->values[i]))
+				{
+					foundcoll = true;
 					res = lappend_oid(res, indcollation->values[i]);
+				}
 			}
+
+			/*
+			 * Extract any collation(s) from the underlying type only if there
+			 * wasn't explicit collation, as otherwise the index wouldn't
+			 * depend on it.
+			 */
+			if (!foundcoll)
+				res = list_concat(res, pgcd_get_type_collations(typid));
 		}
 		else
 		{

@@ -40,4 +40,5 @@ endif		# pg12+
 	REGRESS += 20_constraint
 endif		# pg11+
 
-	REGRESS += 30_views
+	REGRESS += 30_views \
+		   40_untracked_coll
