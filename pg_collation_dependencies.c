@@ -469,7 +469,16 @@ pgcd_expression_walker(Node *node, pgcdWalkerContext *context)
 			CoerceToDomain *coerce = (CoerceToDomain *) node;
 
 			APPEND_COLL(context->collations, coerce->resultcollid);
+
 			APPEND_TYPE_COLLS(context->collations, coerce->resulttype);
+
+			/*
+			 * If the underlying expression is a direct scalar reference we can
+			 * guarantee that the underlying collations won't be used, so
+			 * ignore them.
+			 */
+			if (IsA(coerce->arg, Const) || IsA(coerce->arg, Var))
+				return false;
 
 			break;
 		}

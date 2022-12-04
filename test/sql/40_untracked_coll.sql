@@ -1,7 +1,12 @@
 -- make sure we don't track collations when the index doesn't depend on it
+CREATE DOMAIN d_en AS text COLLATE "en_GB";
 ALTER TABLE coll ADD val_en_us text COLLATE "en_US";
 CREATE INDEX coll_collate_1 ON coll (val COLLATE "en_GB");
 CREATE INDEX coll_collate_2 ON coll (val_en_us COLLATE "en_GB");
+CREATE INDEX coll_collate_3 ON coll ((val::d_en), (val_en_us::d_en));
+-- we still have to keep underlying collations for expression as the expression
+-- itself might depends on those
+CREATE INDEX coll_collate_4 ON coll (((val_en_us || '')::d_en));
 
 SELECT i.relname, c.collname
 FROM pg_catalog.pg_class i,
