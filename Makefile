@@ -41,4 +41,4 @@ endif		# pg12+
 endif		# pg11+
 
 	REGRESS += 30_views \
-		   40_untracked_coll
+		   80_untracked_coll
