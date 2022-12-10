@@ -1,9 +1,9 @@
-SELECT table_name, object_name, collname
+SELECT table_name, index_name, collname
 FROM pg_collation_index_dependencies
 WHERE table_name = 'coll'
 AND collname = 'en_GB';
 
-SELECT table_name, object_name, collname
+SELECT table_name, constraint_name, collname
 FROM pg_collation_constraint_dependencies
 WHERE table_name = 'coll'
 AND collname = 'en_GB';

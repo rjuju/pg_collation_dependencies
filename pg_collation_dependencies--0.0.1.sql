@@ -22,7 +22,7 @@ AS '$libdir/pg_collation_dependencies', 'pg_collation_index_dependencies';
 
 CREATE VIEW pg_collation_index_dependencies AS
     SELECT tc.oid AS tbl_oid, tc.oid::regclass::name AS table_name,
-          ic.oid AS index_oid, ic.oid::regclass::name AS object_name,
+          ic.oid AS index_oid, ic.oid::regclass::name AS index_name,
           coll.oid AS coll_oid, coll.collname
     FROM pg_catalog.pg_class tc
     JOIN pg_catalog.pg_index i ON i.indrelid = tc.oid
@@ -33,7 +33,7 @@ CREATE VIEW pg_collation_index_dependencies AS
 CREATE VIEW pg_collation_constraint_dependencies AS
     SELECT c.oid AS tbl_oid, c.oid::regclass::name AS table_name,
           con.oid AS constraint_oid, quote_ident(n.nspname) || '.' ||
-            quote_ident(con.conname) AS object_name,
+            quote_ident(con.conname) AS constraint_name,
           coll.oid AS coll_oid, coll.collname
     FROM pg_catalog.pg_constraint con
     JOIN pg_catalog.pg_namespace n ON n.oid = con.connamespace
@@ -46,7 +46,10 @@ CREATE VIEW pg_collation_broken_dependencies AS
         coll.collversion AS coll_recorded_version,
         pg_collation_actual_version(coll.oid) AS coll_actual_version
     FROM (
-        SELECT 'index' AS dep_kind, * FROM pg_collation_index_dependencies
+        SELECT 'index' AS dep_kind, tbl_oid, table_name,
+            index_oid AS object_oid, index_name AS object_name,
+            coll_oid, collname
+        FROM pg_collation_index_dependencies
         UNION ALL
         SELECT 'constraint', * FROM pg_collation_constraint_dependencies
     ) s
