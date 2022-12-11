@@ -169,7 +169,7 @@ list_deduplicate_oid(List *list)
 #endif
 
 static bool pgcd_expression_walker(Node *node, pgcdWalkerContext *context);
-static List *pgcd_get_composite_type_collations(Oid relid);
+static List *pgcd_get_rel_collations(Oid relid);
 static List *pgcd_get_constraint_collations(Oid conid);
 static List *pgcd_get_expression_collations(Node *expr);
 static List *pgcd_get_range_type_collations(Oid rngid, bool ismultirange);
@@ -520,10 +520,14 @@ pgcd_expression_walker(Node *node, pgcdWalkerContext *context)
 }
 
 /*
- * Get full list of collation dependencies for the given composite type.
+ * Get full list of collation dependencies for the given composite type or
+ * relation.
+ *
+ * This only looks at the column list, so it's not usable for more complex
+ * objects like materialized views.
  */
 static List *
-pgcd_get_composite_type_collations(Oid relid)
+pgcd_get_rel_collations(Oid relid)
 {
 	List	   *res = NIL;
 	Relation	typRel;
@@ -545,8 +549,15 @@ pgcd_get_composite_type_collations(Oid relid)
 	{
 		Form_pg_attribute pg_att = (Form_pg_attribute) GETSTRUCT(tup);
 
-		/* Composite types don't have system columns. */
-		Assert(pg_att->attnum > 0);
+		Assert(AttributeNumberIsValid(pg_att->attnum));
+
+		/* System columns are guaranteed to not rely on any collation. */
+		if (pg_att->attnum < 0)
+		{
+			/* Composite types don't have system columns. */
+			Assert(get_rel_relkind(relid) != RELKIND_COMPOSITE_TYPE);
+			continue;
+		}
 
 		/* If the attribute has a collation, use it. */
 		if (OidIsValid(pg_att->attcollation))
@@ -751,9 +762,9 @@ pgcd_get_type_collations(Oid typid)
 	}
 	else if (OidIsValid(typtup->typrelid))
 	{
-		/* Composite type, lookup the underlying relation. */
+		/* Composite type or plain rel, lookup the underlying relation. */
 		res = list_concat(res,
-						  pgcd_get_composite_type_collations(typtup->typrelid));
+						  pgcd_get_rel_collations(typtup->typrelid));
 
 	}
 	else if (typtup->typtype == TYPTYPE_RANGE
