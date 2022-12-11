@@ -1,5 +1,14 @@
+CREATE FUNCTION chk(val text, rec record) returns bool AS
+$$
+BEGIN
+    return true;
+END;
+$$ language plpgsql;
+
 ALTER TABLE coll ADD CONSTRAINT coll_check_constraint
     CHECK ( (val COLLATE "en_GB" > '') OR (enfres > ('', '')) );
+ALTER TABLE coll ADD CONSTRAINT coll_check_fct_constraint
+    CHECK ( chk(val, coll.*) );
 ALTER TABLE coll ADD CONSTRAINT coll_unique_constraint
     UNIQUE (val, enfres);
 

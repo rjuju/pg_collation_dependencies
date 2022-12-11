@@ -582,6 +582,7 @@ pgcd_get_constraint_collations(Oid conid)
 	List			   *res = NIL;
 	Datum				datum;
 	bool				isnull;
+	bool				found_conbin = false;
 	Relation			conRel;
 	ScanKeyData			key[1];
 	SysScanDesc			scan;
@@ -606,6 +607,8 @@ pgcd_get_constraint_collations(Oid conid)
 	{
 		char	   *expr;
 		Node	   *node;
+
+		found_conbin = true;
 
 		expr = TextDatumGetCString(datum);
 		node = stringToNode(expr);
@@ -639,8 +642,23 @@ pgcd_get_constraint_collations(Oid conid)
 		conkeys = (AttrNumber *) ARR_DATA_PTR(arr);
 		for (int i = 0; i < numkeys; i++)
 		{
-			Oid		attnum = conkeys[i] - 1;
-			Oid		atttypid = TupleDescAttr(rel->rd_att, attnum)->atttypid;
+			Oid		attnum = conkeys[i];
+			Oid		atttypid;
+
+			/*
+			 * Constraints on whole-row don't have a valid attnum, we can
+			 * simply skip those as the underlying collation(s) have already
+			 * been detected while processing the underlying Vars in the
+			 * associated expression..
+			 */
+			if (!AttributeNumberIsValid(attnum))
+			{
+				/* We should have seen an expression. */
+				Assert(found_conbin);
+				continue;
+			}
+
+			atttypid = TupleDescAttr(rel->rd_att, attnum - 1)->atttypid;
 
 			res = list_concat(res, pgcd_get_type_collations(atttypid));
 		}
