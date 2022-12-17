@@ -20,6 +20,13 @@ CREATE FUNCTION pg_collation_index_dependencies(
     LANGUAGE C STRICT VOLATILE COST 100
 AS '$libdir/pg_collation_dependencies', 'pg_collation_index_dependencies';
 
+CREATE FUNCTION pg_collation_matview_dependencies(
+        IN matviewid regclass, OUT colloid oid
+    )
+    RETURNS SETOF oid
+    LANGUAGE C STRICT VOLATILE COST 100
+AS '$libdir/pg_collation_dependencies', 'pg_collation_matview_dependencies';
+
 CREATE VIEW pg_collation_index_dependencies AS
     SELECT tc.oid AS tbl_oid, tc.oid::regclass::name AS table_name,
           ic.oid AS index_oid, ic.oid::regclass::name AS index_name,
@@ -41,6 +48,14 @@ CREATE VIEW pg_collation_constraint_dependencies AS
     LATERAL pg_collation_constraint_dependencies(con.oid) d(colloid)
     JOIN pg_catalog.pg_collation coll ON coll.oid = d.colloid;
 
+CREATE VIEW pg_collation_matview_dependencies AS
+    SELECT c.oid AS matview_oid, c.oid::regclass::name AS matview_name,
+          coll.oid AS coll_oid, coll.collname
+    FROM pg_catalog.pg_class c,
+    LATERAL pg_collation_matview_dependencies(c.oid) d(colloid)
+    JOIN pg_catalog.pg_collation coll ON coll.oid = d.colloid
+    WHERE relkind = 'm';
+
 CREATE VIEW pg_collation_broken_dependencies AS
     SELECT s.*,
         coll.collversion AS coll_recorded_version,
@@ -52,6 +67,8 @@ CREATE VIEW pg_collation_broken_dependencies AS
         FROM pg_collation_index_dependencies
         UNION ALL
         SELECT 'constraint', * FROM pg_collation_constraint_dependencies
+        UNION ALL
+        SELECT 'materialized view', NULL, NULL, * FROM pg_collation_matview_dependencies
     ) s
     JOIN pg_catalog.pg_collation coll ON coll.oid = s.coll_oid
     WHERE coll.collversion IS DISTINCT FROM pg_collation_actual_version(coll.oid)

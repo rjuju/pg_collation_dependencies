@@ -99,9 +99,11 @@ typedef struct pgcdWalkerContext
 
 extern PGDLLEXPORT Datum	pg_collation_constraint_dependencies(PG_FUNCTION_ARGS);
 extern PGDLLEXPORT Datum	pg_collation_index_dependencies(PG_FUNCTION_ARGS);
+extern PGDLLEXPORT Datum	pg_collation_matview_dependencies(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1(pg_collation_constraint_dependencies);
 PG_FUNCTION_INFO_V1(pg_collation_index_dependencies);
+PG_FUNCTION_INFO_V1(pg_collation_matview_dependencies);
 
 #if PG_VERSION_NUM < 150000
 /* flag bits for InitMaterializedSRF() */
@@ -168,14 +170,15 @@ list_deduplicate_oid(List *list)
 }
 #endif
 
-static bool pgcd_expression_walker(Node *node, pgcdWalkerContext *context);
+static bool pgcd_query_expression_walker(Node *node, pgcdWalkerContext *context);
 static List *pgcd_get_rel_collations(Oid relid);
 static List *pgcd_get_constraint_collations(Oid conid);
-static List *pgcd_get_expression_collations(Node *expr);
+static List *pgcd_get_query_expression_collations(Node *expr);
 static List *pgcd_get_range_type_collations(Oid rngid, bool ismultirange);
 static List *pgcd_get_type_collations(Oid typid);
 static List *pgcd_constraint_deps(Oid index_oid);
 static List *pgcd_index_deps(Oid index_oid);
+static List *pgcd_matview_deps(Oid matview_oid);
 
 #if PG_VERSION_NUM < 150000
 static void
@@ -237,7 +240,7 @@ InitMaterializedSRF(FunctionCallInfo fcinfo, bits32 flags)
  * false positive or redundant values.
  */
 static bool
-pgcd_expression_walker(Node *node, pgcdWalkerContext *context)
+pgcd_query_expression_walker(Node *node, pgcdWalkerContext *context)
 {
 	if (!node)
 		return false;
@@ -491,7 +494,78 @@ pgcd_expression_walker(Node *node, pgcdWalkerContext *context)
 
 			break;
 		}
-		/* Those nodes can appear but we can simply ignore them. */
+		case T_Aggref:
+		{
+			Aggref *ref = (Aggref *) node;
+
+			APPEND_COLL(context->collations, ref->aggcollid);
+			APPEND_COLL(context->collations, ref->inputcollid);
+			APPEND_TYPE_COLLS(context->collations, ref->aggtype);
+
+			break;
+		}
+		case T_Query:
+		{
+			return query_tree_walker((Query *) node,
+									 pgcd_query_expression_walker,
+									 context, 0);
+		}
+		case T_RangeTblFunction:
+		{
+			RangeTblFunction *func = (RangeTblFunction *) node;
+			ListCell	   *lc;
+
+			foreach(lc, func->funccolcollations)
+				APPEND_COLL(context->collations, lfirst_oid(lc));
+
+			foreach(lc, func->funccoltypes)
+				APPEND_TYPE_COLLS(context->collations, lfirst_oid(lc));
+
+			break;
+		}
+		case T_SetOperationStmt:
+		{
+			SetOperationStmt *stmt = (SetOperationStmt *) node;
+			ListCell	 *lc;
+
+			foreach(lc, stmt->colCollations)
+				APPEND_COLL(context->collations, lfirst_oid(lc));
+
+			foreach(lc, stmt->colTypes)
+				APPEND_TYPE_COLLS(context->collations, lfirst_oid(lc));
+
+			break;
+		}
+		case T_WindowFunc:
+		{
+			WindowFunc *func = (WindowFunc *) node;
+
+			APPEND_COLL(context->collations, func->wincollid);
+			APPEND_COLL(context->collations, func->inputcollid);
+			APPEND_TYPE_COLLS(context->collations, func->wintype);
+
+			break;
+		}
+		case T_CommonTableExpr:
+		{
+			CommonTableExpr *expr = (CommonTableExpr *) node;
+			ListCell		*lc;
+
+			foreach(lc, expr->ctecolcollations)
+				APPEND_COLL(context->collations, lfirst_oid(lc));
+			foreach(lc, expr->ctecoltypes)
+				APPEND_TYPE_COLLS(context->collations, lfirst_oid(lc));
+
+			break;
+		}
+		/* Those nodes can appear but nothing specific to do. */
+		case T_JoinExpr:
+		case T_FromExpr:
+		case T_RangeTblRef:
+		case T_SortGroupClause:
+		case T_SubLink:
+		case T_TableSampleClause:
+		case T_TargetEntry:
 		case T_Alias:
 		case T_RangeVar:
 		case T_IntoClause:
@@ -502,11 +576,9 @@ pgcd_expression_walker(Node *node, pgcdWalkerContext *context)
 		case T_NullTest:
 		case T_BooleanTest:
 		case T_List:
-			/* nothing to do */
+			/* Nothing to do, normal exprssion walker is enough. */
 			break;
-		/*
-		 * The rest shouldn't be reachable in an index or constraint expression
-		 */
+		/* The rest shouldn't be reachable in the supported objects. */
 		default:
 			elog(ERROR, "unexpected node type %d (%s)", node->type,
 				 nodeToString(node));
@@ -516,7 +588,7 @@ pgcd_expression_walker(Node *node, pgcdWalkerContext *context)
 #undef APPEND_COLL
 #undef APPEND_TYPE_COLLS
 
-	return expression_tree_walker(node, pgcd_expression_walker, context);
+	return expression_tree_walker(node, pgcd_query_expression_walker, context);
 }
 
 /*
@@ -613,7 +685,7 @@ pgcd_get_constraint_collations(Oid conid)
 		expr = TextDatumGetCString(datum);
 		node = stringToNode(expr);
 
-		res = pgcd_get_expression_collations(node);
+		res = pgcd_get_query_expression_collations(node);
 	}
 
 	/* Get the collations for the underlying keys, if any. */
@@ -676,12 +748,13 @@ pgcd_get_constraint_collations(Oid conid)
  * Get full list of collation dependencies for the given expression.
  */
 static List *
-pgcd_get_expression_collations(Node *expr)
+pgcd_get_query_expression_collations(Node *expr)
 {
 	pgcdWalkerContext context;
 
 	context.collations = NIL;
-	pgcd_expression_walker(expr, &context);
+	query_or_expression_tree_walker(expr, pgcd_query_expression_walker,
+									(void *) &context, 0);
 
 	return context.collations;
 }
@@ -954,7 +1027,7 @@ pgcd_index_deps(Oid index_oid)
 #endif
 								 indexpr_item);
 
-			res = list_concat(res, pgcd_get_expression_collations(indexkey));
+			res = list_concat(res, pgcd_get_query_expression_collations(indexkey));
 		}
 	}
 
@@ -968,7 +1041,7 @@ pgcd_index_deps(Oid index_oid)
 		expr = TextDatumGetCString(datum);
 		indpred = (Node *) stringToNode(expr);
 
-		res = list_concat(res, pgcd_get_expression_collations(indpred));
+		res = list_concat(res, pgcd_get_query_expression_collations(indpred));
 	}
 
 #if PG_VERSION_NUM < 130000
@@ -978,6 +1051,75 @@ pgcd_index_deps(Oid index_oid)
 	list_deduplicate_oid(res);
 
 	ReleaseSysCache(tup);
+
+	return res;
+}
+
+/*
+ * Get full list of collation dependencies for the given materialized view.
+ *
+ * This takes care of removing any duplicated collation.
+ */
+static List *
+pgcd_matview_deps(Oid matview_oid)
+{
+	List	   *res = NIL;
+	Relation	matviewRel;
+	RewriteRule *rule;
+	List	   *actions;
+	Query	   *dataQuery;
+
+	matviewRel = table_open(matview_oid, AccessShareLock);
+
+	/* Make sure it is a materialized view. */
+	if (matviewRel->rd_rel->relkind != RELKIND_MATVIEW)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("\"%s\" is not a materialized view",
+						RelationGetRelationName(matviewRel))));
+
+	/*
+	 * Check that everything is correct for a refresh. Problems at this point
+	 * are internal errors, so elog is sufficient.
+	 */
+	if (matviewRel->rd_rel->relhasrules == false ||
+		matviewRel->rd_rules->numLocks < 1)
+		elog(ERROR,
+			 "materialized view \"%s\" is missing rewrite information",
+			 RelationGetRelationName(matviewRel));
+
+	if (matviewRel->rd_rules->numLocks > 1)
+		elog(ERROR,
+			 "materialized view \"%s\" has too many rules",
+			 RelationGetRelationName(matviewRel));
+
+	rule = matviewRel->rd_rules->rules[0];
+	if (rule->event != CMD_SELECT || !(rule->isInstead))
+		elog(ERROR,
+			 "the rule for materialized view \"%s\" is not a SELECT INSTEAD OF rule",
+			 RelationGetRelationName(matviewRel));
+
+	actions = rule->actions;
+	if (list_length(actions) != 1)
+		elog(ERROR,
+			 "the rule for materialized view \"%s\" is not a single action",
+			 RelationGetRelationName(matviewRel));
+
+	/*
+	 * The stored query was rewritten at the time of the MV definition, but
+	 * has not been scribbled on by the planner.
+	 */
+	dataQuery = linitial_node(Query, actions);
+
+	res = list_concat(res, pgcd_get_query_expression_collations((Node *) dataQuery));
+
+	table_close(matviewRel, NoLock);
+
+#if PG_VERSION_NUM < 130000
+	res =
+#endif
+	list_sort(res, list_oid_cmp);
+	list_deduplicate_oid(res);
 
 	return res;
 }
@@ -1025,6 +1167,37 @@ pg_collation_index_dependencies(PG_FUNCTION_ARGS)
 	InitMaterializedSRF(fcinfo, MAT_SRF_USE_EXPECTED_DESC);
 
 	foreach(lc, pgcd_index_deps(index_oid))
+	{
+		Datum			values[PG_COLL_DEP_COLS];
+		bool			nulls[PG_COLL_DEP_COLS];
+
+		memset(values, 0, sizeof(values));
+		memset(nulls, 0, sizeof(nulls));
+
+		values[0] = ObjectIdGetDatum(lfirst_oid(lc));
+
+		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+	}
+
+	/* clean up and return the tuplestore */
+	tuplestore_donestoring(tupstore);
+	return (Datum) 0;
+}
+
+/*
+ * SRF returning all found collation dependencies for the given materialized
+ * view.
+ */
+Datum
+pg_collation_matview_dependencies(PG_FUNCTION_ARGS)
+{
+	Oid				matview_oid = PG_GETARG_OID(0);
+	ReturnSetInfo  *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	ListCell	   *lc;
+
+	InitMaterializedSRF(fcinfo, MAT_SRF_USE_EXPECTED_DESC);
+
+	foreach(lc, pgcd_matview_deps(matview_oid))
 	{
 		Datum			values[PG_COLL_DEP_COLS];
 		bool			nulls[PG_COLL_DEP_COLS];

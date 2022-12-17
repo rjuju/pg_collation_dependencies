@@ -41,4 +41,5 @@ endif		# pg12+
 endif		# pg11+
 
 	REGRESS += 30_views \
+		   40_matview \
 		   80_untracked_coll
