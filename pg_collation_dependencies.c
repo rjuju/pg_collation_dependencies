@@ -1149,8 +1149,6 @@ pg_collation_constraint_dependencies(PG_FUNCTION_ARGS)
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 	}
 
-	/* clean up and return the tuplestore */
-	tuplestore_donestoring(tupstore);
 	return (Datum) 0;
 }
 
